@@ -95,17 +95,15 @@ cache_city() {
     touch "$nom_lockfile"
     ( sleep "$ratelimit"; rm "$nom_lockfile" ) &
 
-    verbose "Making an API request to Nominatim."
     nom_out="$(curl -s -H "User-Agent: $useragent"\
         "https://nominatim.openstreetmap.org/search?q=${fetched_city}&countrycodes=pl&limit=1&format=json")"
     [ "$nom_out" = "[]" ] && error "City not found!"
     latitude="$(jq -r '.[0].lat' <<< "$nom_out")"
     longitude="$(jq -r '.[0].lon' <<< "$nom_out")"
 
-    verbose "Caching information on <${fetched_city}>." 
-    verbose "Cached info: <${fetched_city}:${latitude}:${longitude}>."
+    verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${latitude}:${longitude}>." 
 
-    echo "${fetched_city}:${latitude}:${longitude}:${city_pretty}" >> "$city_cache"
+    echo "${fetched_city}:${latitude}:${longitude}" >> "$city_cache"
 }
 
 rm_station_cache() {
@@ -202,7 +200,7 @@ grep -q "$city" "$city_cache" && { verbose "Found <${city}> in city cache."; } |
 
 citydata="$(grep -i -m 1 "$city" "$city_cache")"
 stationdata="$(grep "$(closest_station "$citydata")" "$station_cache")"
-IFS=: read -r city city_lat city_long city_pretty <<< "$citydata"
+IFS=: read -r city city_lat city_long _ <<< "$citydata"
 IFS=: read -r station st_lat st_long st_pretty <<< "$stationdata"
 echo -e "${c_cyan}CITY:    ${c_green}${city_pretty}${c_reset}: ${city_long} : ${city_lat} (<$city>)"
 echo -e "${c_cyan}STATION: ${c_green}${st_pretty}${c_reset}: ${st_long} : ${st_lat}"
