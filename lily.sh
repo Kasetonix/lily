@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-progname=${0##*/}
-cachedir="${HOME}/.cache/lily"
-nom_lockfile="${cachedir}/nom.lock"
-city_cache="${cachedir}/city.cache"
-station_cache="${cachedir}/station.cache"
-useragent="lily"
-ratelimit="1"
+PROGNAME=${0##*/}
+CACHEDIR="${HOME}/.cache/lily"
+NOM_LOCKFILE="${CACHEDIR}/nom.lock"
+CITY_CACHE="${CACHEDIR}/city.cache"
+STATION_CACHE="${CACHEDIR}/station.cache"
+USERAGENT="lily"
+RATELIMIT="1"
 
 c_reset="\033[0m"
 c_red="\033[0;31m"
 c_green="\033[0;32m"
-c_yellow="\033[0;33m"
 c_cyan="\033[0;36m"
 
 # Functions
@@ -61,8 +60,6 @@ distsq() {
     local station_coord_x="${4//./}"
     local lat_distance=$((city_coord_y - station_coord_y))
     local long_distance="$((city_coord_x - station_coord_x))"
-    # lat_distance="${lat_distance#-}"
-    # long_distance="${long_distance#-}"
 
     echo "$(((lat_distance/100)**2 + (long_distance/100)**2))"
 }
@@ -91,11 +88,11 @@ cache_city() {
     local city_pretty="$2"
     verbose "Fetching information on <${fetched_city}> from Nominatim."
     [ -z "$fetched_city" ] && { error "\$fetched_city cant be empty";  }
-    [ -f "$nom_lockfile" ] && { error "There is a limit of one request to Nominatim per second!"; }
-    touch "$nom_lockfile"
-    ( sleep "$ratelimit"; rm "$nom_lockfile" ) &
+    [ -f "$NOM_LOCKFILE" ] && { error "There is a limit of one request to Nominatim per second!"; }
+    touch "$NOM_LOCKFILE"
+    ( sleep "$RATELIMIT"; rm "$NOM_LOCKFILE" ) &
 
-    nom_out="$(curl -s -H "User-Agent: $useragent"\
+    nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
         "https://nominatim.openstreetmap.org/search?q=${fetched_city}&countrycodes=pl&limit=1&format=json")"
     [ "$nom_out" = "[]" ] && error "City not found!"
     latitude="$(jq -r '.[0].lat' <<< "$nom_out")"
@@ -103,18 +100,19 @@ cache_city() {
 
     verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${latitude}:${longitude}>." 
 
-    echo "${fetched_city}:${latitude}:${longitude}" >> "$city_cache"
+    echo "${fetched_city}:${latitude}:${longitude}" >> "$CITY_CACHE"
 }
 
 rm_station_cache() {
-    rm -r "${station_cache}"
+    rm -r "${STATION_CACHE}"
     clean
     error "Caching stations interrupted; Cache file removed."
 }
 
 cache_stations() {
     p_info "Caching stations. This may take a while."
-    local imgw_pib_out="$(curl -s -H "User-Agent: $useragent" "$imgw_pib_api_call")"
+    local imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
+        "https://danepubliczne.imgw.pl/api/data/synop")"
 
     local station_id
     local station_name
@@ -127,16 +125,17 @@ cache_stations() {
     local i; local fetched_city
     for ((i = 0; i < station_num; i++)); do
         fetched_city="$(nom_city_format "${station_name[$i]}")"
-        nom_out="$(curl -s -H "User-Agent: $useragent"\
+        ( sleep "$RATELIMIT" ) &
+        nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
             "https://nominatim.openstreetmap.org/search?q=${fetched_city}&countrycodes=pl&limit=1&format=json")"
         [ "$nom_out" = "[]" ] && error "Station city not found!"
         latitude="$(jq -r '.[0].lat' <<< "$nom_out")"
         longitude="$(jq -r '.[0].lon' <<< "$nom_out")"
 
         verbose "Cached info: ${station_id[$i]}:${latitude}:${longitude}:${station_name[$i]}"
-        echo "${station_id[$i]}:${latitude}:${longitude}:${station_name[$i]}" >> "$station_cache"
+        echo "${station_id[$i]}:${latitude}:${longitude}:${station_name[$i]}" >> "$STATION_CACHE"
         display_progress "$((i+1))" "$station_num" "${station_name[$i]}"
-        sleep "$ratelimit"
+        wait
     done
     clear_line
     p_info "Caching stations done."
@@ -154,7 +153,7 @@ closest_station() {
         IFS=: read -r st_id st_lat st_long _ <<< "$line"
         distance="$(distsq $city_lat $city_long $st_lat $st_long)"
         [ "$distance" -lt "$min_distance" ] && { min_distance="$distance"; closest_station_id="$st_id"; }
-    done < "$station_cache"
+    done < "$STATION_CACHE"
 
     echo "$closest_station_id"
 }
@@ -176,31 +175,29 @@ for arg in "$@"; do
 done
 
 [ -n "$flag_v" ] && {
-    echo -e "${c_green}/// ${c_cyan}${progname}${c_green} was launched with the verbose flag. ///${c_reset}"
-    echo "Cache directory:        ${cachedir}"
-    echo "City location cache:    ${city_cache}"
-    echo "Station location cache: ${station_cache}"
+    echo -e "${c_green}/// ${c_cyan}${PROGNAME}${c_green} was launched with the verbose flag. ///${c_reset}"
+    echo "Cache directory:        ${CACHEDIR}"
+    echo "City location cache:    ${CITY_CACHE}"
+    echo "Station location cache: ${STATION_CACHE}"
     echo
 }
 
 trap clean EXIT
 
-[ -d "$cachedir" ] || { verbose "Creating the cache directory."; mkdir -p "$cachedir"; }
+[ -d "$CACHEDIR" ] || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
 
 [ -z "$city_pretty" ] && { error "City name not given!"; }
 city="$(nom_city_format "$city_pretty")"
 verbose "City is set to <${city}>."
-nom_api_call="https://nominatim.openstreetmap.org/search?city=${city}&countrycodes=pl&limit=1&format=json"
-imgw_pib_api_call="https://danepubliczne.imgw.pl/api/data/synop"
 
-[ -f "$city_cache" ] || { verbose "Creating the city cache file."; touch "$city_cache"; }
-[ -f "$station_cache" ] || { verbose "Creating the station cache file."; cache_stations; }
+[ -f "$STATION_CACHE" ] || { verbose "Creating the station cache file."; cache_stations; }
 
-grep -q "$city" "$city_cache" && { verbose "Found <${city}> in city cache."; } || { spinner cache_city "$city" "$city_pretty"; }
+grep -q "$city" "$CITY_CACHE" && { verbose "Found <${city}> in city cache."; } || { spinner cache_city "$city" "$city_pretty"; }
 
-citydata="$(grep -i -m 1 "$city" "$city_cache")"
-stationdata="$(grep "$(closest_station "$citydata")" "$station_cache")"
-IFS=: read -r city city_lat city_long _ <<< "$citydata"
+citydata="$(grep -i -m 1 "$city" "$CITY_CACHE")"
+stationdata="$(grep "$(closest_station "$citydata")" "$STATION_CACHE")"
+IFS=: read -r city city_lat city_long <<< "$citydata"
 IFS=: read -r station st_lat st_long st_pretty <<< "$stationdata"
+
 echo -e "${c_cyan}CITY:    ${c_green}${city_pretty}${c_reset}: ${city_long} : ${city_lat} (<$city>)"
 echo -e "${c_cyan}STATION: ${c_green}${st_pretty}${c_reset}: ${st_long} : ${st_lat}"
