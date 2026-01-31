@@ -208,7 +208,17 @@ Options:
     -v, --verbose   Display additional status information
     -h, --help      Display this message
 
-Locations - script acccepts any location in Poland
+Locations: script acccepts any location in Poland
+
+When not outputting directly to a terminal (e.g. in a pipeline) script lily.sh 
+outputs raw data in colon-separated csv format:
+<station name>:<station id>:<temperature>:<pressure>:<precipitation>:
+<humidity>:<wind speed>:<wind direction>
+Units are as outputted normally.
+
+Data attributions:
+Geocoding data from OpenStreetMap/Nominatim
+Źródłem pochodzenia danych jest Instytut Meteorologii i Gospodarki Wodnej - Państwowy Instytut Badawczy.
 EOF
 }
 
@@ -262,7 +272,10 @@ verbose "Closest station found is <${st_pretty}>."
 
 date="$(printf '%(%F:%H)T\n' "-1")"
 fetch_weather "$station" "$st_pretty" "$date"
-# weatherdata="${c_green}${weatherdata//:/${c_reset}:${c_green}}${c_reset}"
+
+# if not outputting to a terminal output raw data 
+[ -t 1 ] || { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
+
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
 
@@ -273,6 +286,6 @@ echo -e "${c_cyan}Temperature:${c_reset}|${temp}|${c_dim}°C${c_reset}
 ${c_cyan}Pressure:${c_reset}|${press}|${c_dim}hPa${c_reset}
 ${c_cyan}Precipitation:${c_reset}|${prec}|${c_dim}mm${c_reset}
 ${c_cyan}Humidity:${c_reset}|${hum}|${c_dim}%${c_reset}
-${c_cyan}Wind speed:${c_reset}|${wind_spd}|${c_dim}m/s${c_reset}
+${c_cyan}Wind speed:${c_reset}|${wind_spd}|${c_dim}km/h${c_reset}
 ${c_cyan}Wind direction:${c_reset}|${wind_dir}|${c_dim}°${c_reset}" | \
     column -t -s '|' -o ' ' -C title,left -C data,right -C unit,left
