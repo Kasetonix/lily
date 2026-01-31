@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 PROGNAME=${0##*/}
 CACHEDIR="${HOME}/.cache/lily"
+CONFIGDIR="${XDG_CONFIG_DIR:-$HOME/.config}"
+CONFIG="${CONFIGDIR}/lily.conf"
 NOM_LOCKFILE="${CACHEDIR}/nom.lock"
 CITY_CACHE="${CACHEDIR}/city.cache"
 STATION_CACHE="${CACHEDIR}/station.cache"
@@ -20,7 +22,7 @@ c_dim="\e[2m"
 # Functions
 p_info() { echo -e "${c_green}[INFO]:${c_reset} $1"; }
 p_error() { echo -e "\r${c_red}[ ERR]:${c_reset} $1" >&2; }
-verbose() { [ -n "$flag_v" ] && p_info "$@"; true; }
+verbose() { [ "$flag_verbose" = "true" ] && p_info "$@"; true; }
 error() { p_error "$@"; exit 1; }
 
 clear_line() {
@@ -83,7 +85,7 @@ display_progress() {
 
 fetch_city() {
     local fetched_city="$1"
-    local city_pretty="$2"
+    local city="$2"
 
     citydata="$(grep -i -m 1 "$fetched_city" "$CITY_CACHE")"
     [ -n "$citydata" ] && { verbose "Found <${fetched_city}> in city cache."; return; }
@@ -210,8 +212,8 @@ echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather
 USAGE: $PROGNAME [OPTION] LOCATION
 
 Options:
-    -v, --verbose   Display additional status information
-    -h, --help      Display this message
+    -v, --verbose  Display additional status information
+    -h, --help     Display this message
 
 Locations: script acccepts any location in Poland
 
@@ -221,33 +223,53 @@ ${c_dim}<station name>:<station id>:<temperature>:<pressure>:<precipitation>:
 <humidity>:<wind speed>:<wind direction>${c_reset}
 Units are as outputted normally.
 
+Config: You can set the default values of certain variables using a config file located in
+${c_dim}\$XDG_CONFIG_DIR/lily.conf${c_reset} or, if ${c_dim}\$XDG_CONFIG_DIR${c_reset} variable is unset, in ${c_dim}~/.config/lily.conf${c_reset}.
+The config file format is simple key/value pairs.
+Currently supported options are:
+    city=<string>          Sets the default city for which the weather is fetched
+    flag_verbose=<string>  If true enables verbosity
+
 Data attributions:
 ${c_dim}Geocoding data from OpenStreetMap/Nominatim
 Źródłem pochodzenia danych jest Instytut Meteorologii i Gospodarki Wodnej - Państwowy Instytut Badawczy.${c_reset}"
 }
 
+# INIT
 trap clean EXIT
-
-# hide cursor
-echo -ne "\e[?25l"
-
+echo -ne "\e[?25l" # hide cursor
 declare citydata
 declare weatherdata
 
-unset flag_v
+# CMD ARGUMENTS
+unset flag_verbose
 unset flag_h
 unset spinner_pid
 for arg in "$@"; do
     if [[ "$arg" =~ ^(v(erbose)?|-v|--verbose)$ ]]; then
-        flag_v="true"
+        flag_verbose="true"
     elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then
         flag_h="true"
-    elif [[ -z "$city" ]]; then
-        city_pretty="$arg"
+    elif [ -z "$city" ]; then
+        city="$arg"
     fi
 done
 
-[ -n "$flag_v" ] && {
+# CONFIG FILE
+[ -f "$CONFIG" ] && {
+    verbose "Reading config file at ${CONFIG//\/home\/kasetonix/\~}"
+    declare -A config
+    while IFS='=' read -r key val; do
+        verbose "${c_green}[CONFIG]:${c_reset} $key=$val"
+        config[$key]=$val
+    done < $CONFIG
+
+    [ -z "$city" ] && city="${config["city"]}"
+    [ -z "$flag_verbose" ] && flag_verbose="${config["flag_verbose"]}"
+}
+
+# VERBOSE HEADER
+[ "$flag_verbose" = "true" ] && {
     echo -e "${c_cyan}${c_bold}${PROGNAME}${c_reset}${c_green} was launched with the verbose flag.${c_reset}"
     echo -e "Cache directory:        ${c_dim}${CACHEDIR}${c_reset}"
     echo -e "City location cache:    ${c_dim}${CITY_CACHE}${c_reset}"
@@ -256,33 +278,39 @@ done
     echo
 }
 
+# HELP
 [ -n "$flag_h" ] && { print_help; exit 0; }
 
-[ -d "$CACHEDIR" ] || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
-
-[ -z "$city_pretty" ] && { error "City name not given!"; }
-city="$(nom_city_format "$city_pretty")"
-verbose "City is set to <${city}>."
-
+# DIR/FILE INIT 
+[ -d "$CACHEDIR" ]      || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
 [ -f "$STATION_CACHE" ] || { verbose "Creating the station cache file."; cache_stations; }
-[ -f "$CITY_CACHE" ] || { verbose "Creating the city cache file."; :> "$CITY_CACHE"; }
+[ -f "$CITY_CACHE" ]    || { verbose "Creating the city cache file."; :> "$CITY_CACHE"; }
 [ -f "$WEATHER_CACHE" ] || { :> "$WEATHER_CACHE"; }
 
-fetch_city "$city" "$city_pretty"
+# HANDLING THE CITY ARGUMENT
+[ -z "$city" ] && { error "City name not given!"; }
+city_f="$(nom_city_format "$city")"
+verbose "City is set to <${city_f}>."
 
+# FETCHING CITY
+fetch_city "$city_f" "$city"
+
+# FETCHING CLOSEST STATION
 IFS=: read -r station _ _ st_pretty <<< "$(closest_station_data "$citydata")"
 verbose "Closest station found is <${st_pretty}>."
 
+# FETCHING WEATHER
 date="$(printf '%(%F:%H)T\n' "-1")"
 fetch_weather "$station" "$st_pretty" "$date"
 
+# OUTPUT
 # if not outputting to a terminal output raw data 
 [ -t 1 ] || { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
 
-[ -n "$flag_v" ] && echo
+[ "$flag_verbose" = "true" ] && echo
 echo -e "${c_green}${c_bold}Station:${c_reset} ${st_pretty} | ${c_green}${c_bold}Time:${c_reset} $(printf '%(%F %R)T\n' "-1")"
 
 echo -e "${c_cyan}Temperature:${c_reset}|${temp}|${c_dim}°C${c_reset}
