@@ -4,13 +4,17 @@ CACHEDIR="${HOME}/.cache/lily"
 NOM_LOCKFILE="${CACHEDIR}/nom.lock"
 CITY_CACHE="${CACHEDIR}/city.cache"
 STATION_CACHE="${CACHEDIR}/station.cache"
+WEATHER_CACHE="${CACHEDIR}/weather.cache"
 USERAGENT="lily"
 RATELIMIT="1"
+FETCHED_INFO='.temperatura,.cisnienie,.suma_opadu,.wilgotnosc_wzgledna,.predkosc_wiatru,.kierunek_wiatru'
 
-c_reset="\033[0m"
-c_red="\033[0;31m"
-c_green="\033[0;32m"
-c_cyan="\033[0;36m"
+c_reset="\e[0m"
+c_reverse="\e[7m"
+c_bold="\e[1m"
+c_red="\e[0;31m"
+c_green="\e[0;32m"
+c_cyan="\e[0;36m"
 
 # Functions
 p_info() { echo -e "${c_green}[INFO]:${c_reset} $1"; }
@@ -27,7 +31,7 @@ clear_line() {
 }
 
 clean() {
-    [ -n "$spinner_pid" ] && kill "$spinner_pid"
+    [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
     echo -ne "\e[?25h"
 }
 
@@ -35,22 +39,15 @@ nom_city_format() {
     echo "$1" | iconv -f utf-8 -t ascii//translit | sed 's/\s/-/g'
 }
 
-# Spinner
 display_spinner() {
     local strings=('[|]' '[/]' '[-]' '[\]')
 
     while true; do
         for str in "${strings[@]}"; do
             echo -ne "${c_cyan}${str}${c_reset} \r"
-            sleep 0.33
+            sleep 0.25
         done
     done
-}
-
-spinner() {
-    display_spinner &
-    spinner_pid="$!"
-    "$@"
 }
 
 distsq() {
@@ -86,10 +83,14 @@ display_progress() {
 cache_city() {
     local fetched_city="$1"
     local city_pretty="$2"
+
+    display_spinner &
+    spinner_pid="$!"
+
     verbose "Fetching information on <${fetched_city}> from Nominatim."
     [ -z "$fetched_city" ] && { error "\$fetched_city cant be empty";  }
     [ -f "$NOM_LOCKFILE" ] && { error "There is a limit of one request to Nominatim per second!"; }
-    touch "$NOM_LOCKFILE"
+    > "$NOM_LOCKFILE"
     ( sleep "$RATELIMIT"; rm "$NOM_LOCKFILE" ) &
 
     nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
@@ -101,6 +102,8 @@ cache_city() {
     verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${latitude}:${longitude}>." 
 
     echo "${fetched_city}:${latitude}:${longitude}" >> "$CITY_CACHE"
+
+    [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
 }
 
 rm_station_cache() {
@@ -123,7 +126,7 @@ cache_stations() {
     trap rm_station_cache INT TERM
 
     local i; local fetched_city
-    for ((i = 0; i < station_num; i++)); do
+    for i in "${!station_id[@]}"; do
         fetched_city="$(nom_city_format "${station_name[$i]}")"
         ( sleep "$RATELIMIT" ) &
         nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
@@ -143,23 +146,60 @@ cache_stations() {
     trap - INT TERM
 }
 
-closest_station() {
+closest_station_data() {
     local citydata="$1"
     IFS=: read -r _ city_lat city_long _ <<< "$citydata"
     local distance; local closest_station_id
     local min_distance="9223372036854775807" 
 
     while IFS= read -r line; do
-        IFS=: read -r st_id st_lat st_long _ <<< "$line"
+        IFS=: read -r _ st_lat st_long _ <<< "$line"
         distance="$(distsq $city_lat $city_long $st_lat $st_long)"
-        [ "$distance" -lt "$min_distance" ] && { min_distance="$distance"; closest_station_id="$st_id"; }
+        [ "$distance" -lt "$min_distance" ] && { min_distance="$distance"; closest_station_data="$line"; }
     done < "$STATION_CACHE"
 
-    echo "$closest_station_id"
+    echo "$closest_station_data"
 }
+
+fetch_weather() {
+    local station_id="$1"
+    local station_name="$2"
+    local date="$3"
+    local cachedate; local line
+
+    mapfile -tn '1' line < "$WEATHER_CACHE"
+    cachedate="${line[0]}"
+
+    if [ "$date" = "$cachedate" ]; then
+        weatherdata="$(grep -i -m 1 "$station_id" "$WEATHER_CACHE")"
+        [ -n "$weatherdata" ] && { verbose "Found cached weather information from station <${station_name}>."; return; }
+    else
+        [ -n "$cachedate" ] && { verbose "Remaking cache."; } || { verbose "Creating weather cache."; }
+        echo "$date" > "$WEATHER_CACHE"
+        cachedate="$date"
+    fi
+
+    display_spinner &
+    spinner_pid="$!"
+
+    verbose "Fetching weather information from station <${station_name}>."
+    local imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
+        "https://danepubliczne.imgw.pl/api/data/synop/id/${station_id}")"
+    weatherdata="$(jq -r "$FETCHED_INFO" <<< "$imgw_pib_out")"
+    weatherdata="${station_id}:${weatherdata//$'\n'/:}"
+
+    echo "$weatherdata" >> "$WEATHER_CACHE"
+    [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
+}
+
+trap clean EXIT
 
 # hide cursor
 echo -ne "\e[?25l"
+
+declare stationdata
+declare citydata
+declare weatherdata
 
 unset flag_v
 unset flag_h
@@ -170,19 +210,18 @@ for arg in "$@"; do
     elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then
         flag_h="true"
     elif [[ -z "$city" ]]; then
-        city_pretty="$arg"
+    city_pretty="$arg"
     fi
 done
 
 [ -n "$flag_v" ] && {
-    echo -e "${c_green}/// ${c_cyan}${PROGNAME}${c_green} was launched with the verbose flag. ///${c_reset}"
+    echo -e "${c_green}/// ${c_cyan}${c_bold}${PROGNAME}${c_reset} ${c_green}was launched with the verbose flag. ///${c_reset}"
     echo "Cache directory:        ${CACHEDIR}"
     echo "City location cache:    ${CITY_CACHE}"
     echo "Station location cache: ${STATION_CACHE}"
     echo
 }
 
-trap clean EXIT
 
 [ -d "$CACHEDIR" ] || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
 
@@ -191,13 +230,27 @@ city="$(nom_city_format "$city_pretty")"
 verbose "City is set to <${city}>."
 
 [ -f "$STATION_CACHE" ] || { verbose "Creating the station cache file."; cache_stations; }
+[ -f "$CITY_CACHE" ] || { verbose "Creating the city cache file."; > "$CITY_CACHE"; }
+[ -f "$WEATHER_CACHE" ] || { > "$WEATHER_CACHE"; }
 
-grep -q "$city" "$CITY_CACHE" && { verbose "Found <${city}> in city cache."; } || { spinner cache_city "$city" "$city_pretty"; }
-
+# TODO: Put everything here inside cache_city()
 citydata="$(grep -i -m 1 "$city" "$CITY_CACHE")"
-stationdata="$(grep "$(closest_station "$citydata")" "$STATION_CACHE")"
-IFS=: read -r city city_lat city_long <<< "$citydata"
-IFS=: read -r station st_lat st_long st_pretty <<< "$stationdata"
+[ -n "$citydata" ] && { verbose "Found <${city}> in city cache."; } ||
+    { cache_city "$city" "$city_pretty"; citydata="$(grep -i -m 1 "$city" "$CITY_CACHE")"; }
 
-echo -e "${c_cyan}CITY:    ${c_green}${city_pretty}${c_reset}: ${city_long} : ${city_lat} (<$city>)"
-echo -e "${c_cyan}STATION: ${c_green}${st_pretty}${c_reset}: ${st_long} : ${st_lat}"
+IFS=: read -r city city_lat city_long <<< "$citydata"
+IFS=: read -r station st_lat st_long st_pretty <<< "$(closest_station_data "$citydata")"
+
+date="$(printf '%(%F:%H)T\n' "-1")"
+fetch_weather "$station" "$st_pretty" "$date"
+
+echo -e "${c_cyan}CITY:    ${c_green}${city_pretty}${c_reset}: ${city_lat} : ${city_long}"
+echo -e "${c_cyan}STATION: ${c_green}${st_pretty}${c_reset}: ${st_lat} : ${st_long}"
+
+IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
+echo -e "\t${c_cyan}Temperatura:${c_reset} ${temp} °C"
+echo -e "\t${c_cyan}Ciśnienie:${c_reset} ${press} hPa"
+echo -e "\t${c_cyan}Opady:${c_reset} ${prec} mm"
+echo -e "\t${c_cyan}Wilgotność:${c_reset} ${hum} %"
+echo -e "\t${c_cyan}Prędkość wiatru:${c_reset} ${wind_spd} m/s"
+echo -e "\t${c_cyan}Kierunek wiatru:${c_reset} ${wind_dir} °"
