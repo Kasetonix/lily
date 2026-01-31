@@ -78,7 +78,7 @@ display_progress() {
     bar+="]"
     
     clear_line
-    printf "${c_cyan}%s${c_reset} (%*s%%) %s%s\r" "$bar" 3 "$perc" "$msg" "$padding" 
+    printf "${c_cyan}%s${c_reset} (%*s%%) %s%s\r" "$bar" 3 "$perc" "$msg"
 }
 
 fetch_city() {
@@ -94,7 +94,7 @@ fetch_city() {
     verbose "Fetching information on <${fetched_city}> from Nominatim."
     [ -z "$fetched_city" ] && { error "\$fetched_city cant be empty";  }
     [ -f "$NOM_LOCKFILE" ] && { error "There is a limit of one request to Nominatim per second!"; }
-    > "$NOM_LOCKFILE"
+    :> "$NOM_LOCKFILE"
     ( sleep "$RATELIMIT"; rm "$NOM_LOCKFILE" ) &
 
     nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
@@ -119,12 +119,15 @@ rm_station_cache() {
 
 cache_stations() {
     p_info "Caching stations. This may take a while."
-    local imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
-        "https://danepubliczne.imgw.pl/api/data/synop")"
-
+    local imgw_pib_out;
     local station_id
     local station_name
-    local station_num="$(jq -r 'length' <<< "$imgw_pib_out")"
+    local station_num
+
+    imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
+        "https://danepubliczne.imgw.pl/api/data/synop")"
+
+    station_num="$(jq -r 'length' <<< "$imgw_pib_out")"
     readarray -t station_id <<< "$(jq -r '.[].id_stacji' <<< "$imgw_pib_out")"
     readarray -t station_name <<< "$(jq -r '.[].stacja' <<< "$imgw_pib_out")"
 
@@ -155,12 +158,12 @@ cache_stations() {
 closest_station_data() {
     local citydata="$1"
     IFS=: read -r _ city_lat city_long _ <<< "$citydata"
-    local distance; local closest_station_id
+    local distance; local closest_station_data 
     local min_distance="9223372036854775807" 
 
     while IFS= read -r line; do
         IFS=: read -r _ st_lat st_long _ <<< "$line"
-        distance="$(distsq $city_lat $city_long $st_lat $st_long)"
+        distance="$(distsq "$city_lat" "$city_long" "$st_lat" "$st_long")"
         [ "$distance" -lt "$min_distance" ] && { min_distance="$distance"; closest_station_data="$line"; }
     done < "$STATION_CACHE"
 
@@ -168,10 +171,13 @@ closest_station_data() {
 }
 
 fetch_weather() {
-    local station_id="$1"
-    local station_name="$2"
-    local date="$3"
+    local station_id; local station_name; local date
     local cachedate; local line
+    local imgw_pib_out
+
+    station_id="$1"
+    station_name="$2"
+    date="$3"
 
     mapfile -tn '1' line < "$WEATHER_CACHE"
     cachedate="${line[0]}"
@@ -180,7 +186,7 @@ fetch_weather() {
         weatherdata="$(grep -i -m 1 "$station_id" "$WEATHER_CACHE")"
         [ -n "$weatherdata" ] && { verbose "Found cached weather information from station <${station_name}>."; return; }
     else
-        [ -n "$cachedate" ] && { verbose "Remaking cache."; } || { verbose "Creating weather cache."; }
+        if [ -n "$cachedate" ]; then verbose "Remaking cache." else verbose "Creating weather cache."; fi
         echo "$date" > "$WEATHER_CACHE"
         cachedate="$date"
     fi
@@ -189,7 +195,7 @@ fetch_weather() {
     spinner_pid="$!"
 
     verbose "Fetching weather information from station <${station_name}>."
-    local imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
+    imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
         "https://danepubliczne.imgw.pl/api/data/synop/id/${station_id}")"
     weatherdata="$(jq -r "$FETCHED_INFO" <<< "$imgw_pib_out")"
     weatherdata="${station_id}:${weatherdata//$'\n'/:}"
@@ -200,8 +206,7 @@ fetch_weather() {
 }
 
 print_help() {
-echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather information."
-cat <<- EOF
+echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather information.
 USAGE: $PROGNAME [OPTION] LOCATION
 
 Options:
@@ -210,16 +215,15 @@ Options:
 
 Locations: script acccepts any location in Poland
 
-When not outputting directly to a terminal (e.g. in a pipeline) script lily.sh 
+When not outputting directly to a terminal (e.g. in a pipeline) this script
 outputs raw data in colon-separated csv format:
-<station name>:<station id>:<temperature>:<pressure>:<precipitation>:
-<humidity>:<wind speed>:<wind direction>
+${c_dim}<station name>:<station id>:<temperature>:<pressure>:<precipitation>:
+<humidity>:<wind speed>:<wind direction>${c_reset}
 Units are as outputted normally.
 
 Data attributions:
-Geocoding data from OpenStreetMap/Nominatim
-Źródłem pochodzenia danych jest Instytut Meteorologii i Gospodarki Wodnej - Państwowy Instytut Badawczy.
-EOF
+${c_dim}Geocoding data from OpenStreetMap/Nominatim
+Źródłem pochodzenia danych jest Instytut Meteorologii i Gospodarki Wodnej - Państwowy Instytut Badawczy.${c_reset}"
 }
 
 trap clean EXIT
@@ -227,7 +231,6 @@ trap clean EXIT
 # hide cursor
 echo -ne "\e[?25l"
 
-declare stationdata
 declare citydata
 declare weatherdata
 
@@ -240,16 +243,16 @@ for arg in "$@"; do
     elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then
         flag_h="true"
     elif [[ -z "$city" ]]; then
-    city_pretty="$arg"
+        city_pretty="$arg"
     fi
 done
 
 [ -n "$flag_v" ] && {
-    echo -e "${c_green}/// ${c_cyan}${c_bold}${PROGNAME}${c_reset} ${c_green}was launched with the verbose flag. ///${c_reset}"
-    echo "Cache directory:        ${CACHEDIR}"
-    echo "City location cache:    ${CITY_CACHE}"
-    echo "Station location cache: ${STATION_CACHE}"
-    echo "Weather cache:          ${WEATHER_CACHE}"
+    echo -e "${c_cyan}${c_bold}${PROGNAME}${c_reset}${c_green} was launched with the verbose flag.${c_reset}"
+    echo -e "Cache directory:        ${c_dim}${CACHEDIR}${c_reset}"
+    echo -e "City location cache:    ${c_dim}${CITY_CACHE}${c_reset}"
+    echo -e "Station location cache: ${c_dim}${STATION_CACHE}${c_reset}"
+    echo -e "Weather cache:          ${c_dim}${WEATHER_CACHE}${c_reset}"
     echo
 }
 
@@ -262,8 +265,8 @@ city="$(nom_city_format "$city_pretty")"
 verbose "City is set to <${city}>."
 
 [ -f "$STATION_CACHE" ] || { verbose "Creating the station cache file."; cache_stations; }
-[ -f "$CITY_CACHE" ] || { verbose "Creating the city cache file."; > "$CITY_CACHE"; }
-[ -f "$WEATHER_CACHE" ] || { > "$WEATHER_CACHE"; }
+[ -f "$CITY_CACHE" ] || { verbose "Creating the city cache file."; :> "$CITY_CACHE"; }
+[ -f "$WEATHER_CACHE" ] || { :> "$WEATHER_CACHE"; }
 
 fetch_city "$city" "$city_pretty"
 
