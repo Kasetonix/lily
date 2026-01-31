@@ -10,7 +10,6 @@ RATELIMIT="1"
 FETCHED_INFO='.temperatura,.cisnienie,.suma_opadu,.wilgotnosc_wzgledna,.predkosc_wiatru,.kierunek_wiatru'
 
 c_reset="\e[0m"
-c_reverse="\e[7m"
 c_bold="\e[1m"
 c_red="\e[0;31m"
 c_green="\e[0;32m"
@@ -192,6 +191,19 @@ fetch_weather() {
     [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
 }
 
+print_help() {
+echo -e "\e[36;1mlily.sh\e[0m - shell script for fetching weather information."
+cat <<- EOF
+USAGE: $PROGNAME [OPTION] LOCATION
+
+Options:
+    -v, --verbose   Display additional status information
+    -h, --help      Display this message
+
+Locations - script acccepts any location in Poland
+EOF
+}
+
 trap clean EXIT
 
 # hide cursor
@@ -222,6 +234,7 @@ done
     echo
 }
 
+[ -n "$flag_h" ] && { print_help; exit 0; }
 
 [ -d "$CACHEDIR" ] || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
 
