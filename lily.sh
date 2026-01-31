@@ -11,9 +11,11 @@ FETCHED_INFO='.temperatura,.cisnienie,.suma_opadu,.wilgotnosc_wzgledna,.predkosc
 
 c_reset="\e[0m"
 c_bold="\e[1m"
-c_red="\e[0;31m"
-c_green="\e[0;32m"
-c_cyan="\e[0;36m"
+c_red="\e[31m"
+c_green="\e[32m"
+c_yellow="\e[33m"
+c_cyan="\e[36m"
+c_dim="\e[2m"
 
 # Functions
 p_info() { echo -e "${c_green}[INFO]:${c_reset} $1"; }
@@ -26,7 +28,7 @@ clear_line() {
     for ((i = 0; i < "COLUMNS"; i++)); do
         line+=" "
     done
-    echo -ne "\r$line\r"
+    echo -ne "\r${line}\r"
 }
 
 clean() {
@@ -44,7 +46,7 @@ display_spinner() {
     while true; do
         for str in "${strings[@]}"; do
             echo -ne "${c_cyan}${str}${c_reset} \r"
-            sleep 0.25
+            sleep 0.0625
         done
     done
 }
@@ -79,9 +81,12 @@ display_progress() {
     printf "${c_cyan}%s${c_reset} (%*s%%) %s%s\r" "$bar" 3 "$perc" "$msg" "$padding" 
 }
 
-cache_city() {
+fetch_city() {
     local fetched_city="$1"
     local city_pretty="$2"
+
+    citydata="$(grep -i -m 1 "$fetched_city" "$CITY_CACHE")"
+    [ -n "$citydata" ] && { verbose "Found <${fetched_city}> in city cache."; return; }
 
     display_spinner &
     spinner_pid="$!"
@@ -101,6 +106,7 @@ cache_city() {
     verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${latitude}:${longitude}>." 
 
     echo "${fetched_city}:${latitude}:${longitude}" >> "$CITY_CACHE"
+    citydata="${fetched_city}:${latitude}:${longitude}"
 
     [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
 }
@@ -139,6 +145,7 @@ cache_stations() {
         display_progress "$((i+1))" "$station_num" "${station_name[$i]}"
         wait
     done
+
     clear_line
     p_info "Caching stations done."
 
@@ -186,13 +193,14 @@ fetch_weather() {
         "https://danepubliczne.imgw.pl/api/data/synop/id/${station_id}")"
     weatherdata="$(jq -r "$FETCHED_INFO" <<< "$imgw_pib_out")"
     weatherdata="${station_id}:${weatherdata//$'\n'/:}"
+    weatherdata="${weatherdata//null/n\/a}"
 
     echo "$weatherdata" >> "$WEATHER_CACHE"
     [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
 }
 
 print_help() {
-echo -e "\e[36;1mlily.sh\e[0m - shell script for fetching weather information."
+echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather information."
 cat <<- EOF
 USAGE: $PROGNAME [OPTION] LOCATION
 
@@ -231,6 +239,7 @@ done
     echo "Cache directory:        ${CACHEDIR}"
     echo "City location cache:    ${CITY_CACHE}"
     echo "Station location cache: ${STATION_CACHE}"
+    echo "Weather cache:          ${WEATHER_CACHE}"
     echo
 }
 
@@ -246,24 +255,24 @@ verbose "City is set to <${city}>."
 [ -f "$CITY_CACHE" ] || { verbose "Creating the city cache file."; > "$CITY_CACHE"; }
 [ -f "$WEATHER_CACHE" ] || { > "$WEATHER_CACHE"; }
 
-# TODO: Put everything here inside cache_city()
-citydata="$(grep -i -m 1 "$city" "$CITY_CACHE")"
-[ -n "$citydata" ] && { verbose "Found <${city}> in city cache."; } ||
-    { cache_city "$city" "$city_pretty"; citydata="$(grep -i -m 1 "$city" "$CITY_CACHE")"; }
+fetch_city "$city" "$city_pretty"
 
-IFS=: read -r city city_lat city_long <<< "$citydata"
-IFS=: read -r station st_lat st_long st_pretty <<< "$(closest_station_data "$citydata")"
+IFS=: read -r station _ _ st_pretty <<< "$(closest_station_data "$citydata")"
+verbose "Closest station found is <${st_pretty}>."
 
 date="$(printf '%(%F:%H)T\n' "-1")"
 fetch_weather "$station" "$st_pretty" "$date"
-
-echo -e "${c_cyan}CITY:    ${c_green}${city_pretty}${c_reset}: ${city_lat} : ${city_long}"
-echo -e "${c_cyan}STATION: ${c_green}${st_pretty}${c_reset}: ${st_lat} : ${st_long}"
-
+# weatherdata="${c_green}${weatherdata//:/${c_reset}:${c_green}}${c_reset}"
+weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
-echo -e "\t${c_cyan}Temperatura:${c_reset} ${temp} °C"
-echo -e "\t${c_cyan}Ciśnienie:${c_reset} ${press} hPa"
-echo -e "\t${c_cyan}Opady:${c_reset} ${prec} mm"
-echo -e "\t${c_cyan}Wilgotność:${c_reset} ${hum} %"
-echo -e "\t${c_cyan}Prędkość wiatru:${c_reset} ${wind_spd} m/s"
-echo -e "\t${c_cyan}Kierunek wiatru:${c_reset} ${wind_dir} °"
+
+[ -n "$flag_v" ] && echo
+echo -e "${c_green}${c_bold}Station:${c_reset} ${st_pretty} | ${c_green}${c_bold}Time:${c_reset} $(printf '%(%F %R)T\n' "-1")"
+
+echo -e "${c_cyan}Temperature:${c_reset}|${temp}|${c_dim}°C${c_reset}
+${c_cyan}Pressure:${c_reset}|${press}|${c_dim}hPa${c_reset}
+${c_cyan}Precipitation:${c_reset}|${prec}|${c_dim}mm${c_reset}
+${c_cyan}Humidity:${c_reset}|${hum}|${c_dim}%${c_reset}
+${c_cyan}Wind speed:${c_reset}|${wind_spd}|${c_dim}m/s${c_reset}
+${c_cyan}Wind direction:${c_reset}|${wind_dir}|${c_dim}°${c_reset}" | \
+    column -t -s '|' -o ' ' -C title,left -C data,right -C unit,left
