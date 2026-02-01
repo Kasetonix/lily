@@ -222,11 +222,11 @@ Config: You can set the default values of certain variables using a config file 
 ${c_dim}\$XDG_CONFIG_DIR/lily.conf${c_reset} or, if ${c_dim}\$XDG_CONFIG_DIR${c_reset} variable is unset, in ${c_dim}~/.config/lily.conf${c_reset}.
 The config file format is simple key/value pairs.
 Currently supported options are:
-    city=<string>          Sets the default city for which the weather is fetched
-    flag_verbose=<string>  If true acts like --verbose
-    flag_raw=<string>      If true acts like --raw
-    flag_nc=<string>       If true acts like --no-color
-    flag_form=<string>     If true acts like --format
+    city=<string>            Sets the default city for which the weather is fetched
+    flag_verbose=<string>    If true acts like --verbose
+    flag_raw=<string>        If true acts like --raw
+    flag_formatted=<string>  If true acts like --formatted
+    flag_no_color=<string>   If true acts like --no-color
 
 Data attributions:
 ${c_dim}Geocoding data from OpenStreetMap/Nominatim
@@ -241,39 +241,37 @@ declare weatherdata
 
 # CMD ARGUMENTS
 unset spinner_pid
-
 declare unknown_arg=""
 declare -A opts
 for arg in "$@"; do
     if   [[ "$arg" =~ ^(v(erbose)?|-v|--verbose)$ ]]; then opts["flag_verbose"]="true"
     elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then opts["flag_help"]="true"
     elif [[ "$arg" =~ ^(r(aw)?|-r|--raw)$ ]]; then opts["flag_raw"]="true"
-    elif [[ "$arg" =~ ^(f(ormatted)?|-f|--formatted)$ ]]; then opts["flag_form"]="true"
-    elif [[ "$arg" =~ ^(nc?(olor)?|-n|--no-color)$ ]]; then opts["flag_nc"]="true"
+    elif [[ "$arg" =~ ^(f(ormatted)?|-f|--formatted)$ ]]; then opts["flag_formatted"]="true"
+    elif [[ "$arg" =~ ^(nc?(olor)?|-n|--no-color)$ ]]; then opts["flag_no_color"]="true"
     elif [[ "$arg" =~ ^-.*$ ]]; then [ -z "$unknown_arg" ] && unknown_arg="${arg}" || unknown_arg="${arg}, ${unknown_arg}"
     elif [ -z "$city" ]; then city="$arg"
+    else [ -z "$unknown_arg" ] && unknown_arg="${arg}" || unknown_arg="${arg}, ${unknown_arg}"
     fi
 done
 
 # CONFIG FILE
 [ -f "$CONFIG" ] && {
-    verbose "Reading config file at ${CONFIG//\/home\/kasetonix/\~}"
     declare -A config
     while IFS='=' read -r key val; do
-        verbose "${c_green}[CONFIG]:${c_reset} $key=$val"
         config[$key]=$val
     done < "$CONFIG"
 
     [ -z "$city" ] && city="${config["city"]}"
     [ -z "${opts["flag_verbose"]}" ] && opts["flag_verbose"]="${config["flag_verbose"]}"
     [ -z "${opts["flag_raw"]}" ] && opts["flag_raw"]="${config["flag_raw"]}"
-    [ -z "${opts["flag_form"]}" ] && opts["flag_form"]="${config["flag_form"]}"
-    [ -z "${opts["flag_nc"]}" ] && opts["flag_nc"]="${config["flag_nc"]}"
+    [ -z "${opts["flag_formatted"]}" ] && opts["flag_formatted"]="${config["flag_formatted"]}"
+    [ -z "${opts["flag_no_color"]}" ] && opts["flag_no_color"]="${config["flag_no_color"]}"
 }
 
 # COLOR HANLDING 
 declare c_reset="" c_bold="" c_red="" c_green="" c_yellow="" c_cyan="" c_dim=""
-[ "${opts["flag_nc"]}" != "true" ] && { 
+[ "${opts["flag_no_color"]}" != "true" ] && { 
     c_reset="\e[0m"
     c_bold="\e[1m"
     c_dim="\e[2m"
@@ -289,10 +287,18 @@ declare c_reset="" c_bold="" c_red="" c_green="" c_yellow="" c_cyan="" c_dim=""
 # VERBOSE HEADER
 [ "${opts["flag_verbose"]}" = "true" ] && {
     echo -e "${c_cyan}${c_bold}${PROGNAME}${c_reset}${c_green} was launched with the verbose flag.${c_reset}"
-    echo -e "Cache directory:        ${c_dim}${CACHEDIR}${c_reset}"
-    echo -e "City location cache:    ${c_dim}${CITY_CACHE}${c_reset}"
-    echo -e "Station location cache: ${c_dim}${STATION_CACHE}${c_reset}"
-    echo -e "Weather cache:          ${c_dim}${WEATHER_CACHE}${c_reset}"
+    echo -e "City location cache:    ${c_dim}${CITY_CACHE//$HOME/\~}${c_reset}"
+    echo -e "Station location cache: ${c_dim}${STATION_CACHE//$HOME/\~}${c_reset}"
+    echo -e "Weather cache:          ${c_dim}${WEATHER_CACHE//$HOME/\~}${c_reset}"
+    echo -e "Config file:            ${c_dim}${CONFIG//$HOME/\~}${c_reset}\n"
+}
+
+# DISPLAYING OPTIONS WHEN RUN WITH --VERBOSE
+[ "${opts["flag_verbose"]}" = "true" ] && {
+    p_info "Used options:"
+    for key in "${!opts[@]}"; do
+        [ -n "${opts["$key"]}" ] && p_info "${key}=${opts["$key"]}"
+    done
     echo
 }
 
@@ -323,7 +329,7 @@ fetch_weather "$station" "$st_pretty" "$date"
 
 # OUTPUT
 # if not outputting to a terminal output raw data 
-[ "${opts["flag_form"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
+[ "${opts["flag_formatted"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
