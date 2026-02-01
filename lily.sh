@@ -262,7 +262,7 @@ done
     while IFS='=' read -r key val; do
         verbose "${c_green}[CONFIG]:${c_reset} $key=$val"
         config[$key]=$val
-    done < $CONFIG
+    done < "$CONFIG"
 
     [ -z "$city" ] && city="${config["city"]}"
     [ -z "$flag_verbose" ] && flag_verbose="${config["flag_verbose"]}"
@@ -309,6 +309,12 @@ fetch_weather "$station" "$st_pretty" "$date"
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
+
+if   [ "$wind_dir" -le  "45" ] || [ "$wind_dir" -ge "315" ]; then wind_dir="${c_dim}↓${c_reset} $wind_dir"
+elif [  "45" -lt "$wind_dir" ] && [ "$wind_dir" -le "135" ]; then wind_dir="${c_dim}←${c_reset} $wind_dir"
+elif [ "135" -lt "$wind_dir" ] && [ "$wind_dir" -le "225" ]; then wind_dir="${c_dim}↑${c_reset} $wind_dir"
+elif [ "225" -lt "$wind_dir" ] && [ "$wind_dir" -le "315" ]; then wind_dir="${c_dim}→${c_reset} $wind_dir"
+fi
 
 [ "$flag_verbose" = "true" ] && echo
 echo -e "${c_green}${c_bold}Station:${c_reset} ${st_pretty} | ${c_green}${c_bold}Time:${c_reset} $(printf '%(%F %R)T\n' "-1")"
