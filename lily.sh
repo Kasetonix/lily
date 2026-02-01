@@ -11,18 +11,10 @@ USERAGENT="lily"
 RATELIMIT="1"
 FETCHED_INFO='.temperatura,.cisnienie,.suma_opadu,.wilgotnosc_wzgledna,.predkosc_wiatru,.kierunek_wiatru'
 
-c_reset="\e[0m"
-c_bold="\e[1m"
-c_red="\e[31m"
-c_green="\e[32m"
-c_yellow="\e[33m"
-c_cyan="\e[36m"
-c_dim="\e[2m"
-
 # Functions
 p_info() { echo -e "${c_green}[INFO]:${c_reset} $1"; }
 p_error() { echo -e "\r${c_red}[ ERR]:${c_reset} $1" >&2; }
-verbose() { [ "$flag_verbose" = "true" ] && p_info "$@"; true; }
+verbose() { [ "${opts["flag_verbose"]}" = "true" ] && p_info "$@"; true; }
 error() { p_error "$@"; exit 1; }
 
 clear_line() {
@@ -212,10 +204,12 @@ echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather
 USAGE: $PROGNAME [OPTION] LOCATION
 
 Options:
-    -v, --verbose  Display additional status information
-    -h, --help     Display this message
+    -v, --verbose   Display additional status information
+    -h, --help      Display this message
+    -r, --raw       Display output in colon-separated csv format
+    -n, --no-color  Disable output coloring
 
-Locations: script acccepts any location in Poland
+Locations: script acccepts any location in Poland.
 
 When not outputting directly to a terminal (e.g. in a pipeline) this script
 outputs raw data in colon-separated csv format:
@@ -228,7 +222,9 @@ ${c_dim}\$XDG_CONFIG_DIR/lily.conf${c_reset} or, if ${c_dim}\$XDG_CONFIG_DIR${c_
 The config file format is simple key/value pairs.
 Currently supported options are:
     city=<string>          Sets the default city for which the weather is fetched
-    flag_verbose=<string>  If true enables verbosity
+    flag_verbose=<string>  If true acts like --verbose
+    flag_raw=<string>      If true acts like --raw
+    flag_nc=<string>       If true acts like --no-color
 
 Data attributions:
 ${c_dim}Geocoding data from OpenStreetMap/Nominatim
@@ -242,16 +238,17 @@ declare citydata
 declare weatherdata
 
 # CMD ARGUMENTS
-unset flag_verbose
-unset flag_h
 unset spinner_pid
+
+declare unknown_arg=""
+declare -A opts
 for arg in "$@"; do
-    if [[ "$arg" =~ ^(v(erbose)?|-v|--verbose)$ ]]; then
-        flag_verbose="true"
-    elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then
-        flag_h="true"
-    elif [ -z "$city" ]; then
-        city="$arg"
+    if   [[ "$arg" =~ ^(v(erbose)?|-v|--verbose)$ ]]; then opts["flag_verbose"]="true"
+    elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then opts["flag_help"]="true"
+    elif [[ "$arg" =~ ^(r(aw)?|-r|--raw)$ ]]; then opts["flag_raw"]="true"
+    elif [[ "$arg" =~ ^(nc?(olor)?|-n|--no-color)$ ]]; then opts["flag_nc"]="true"
+    elif [[ "$arg" =~ ^-.*$ ]]; then [ -z "$unknown_arg" ] && unknown_arg="${arg}" || unknown_arg="${arg}, ${unknown_arg}"
+    elif [ -z "$city" ]; then city="$arg"
     fi
 done
 
@@ -265,11 +262,28 @@ done
     done < "$CONFIG"
 
     [ -z "$city" ] && city="${config["city"]}"
-    [ -z "$flag_verbose" ] && flag_verbose="${config["flag_verbose"]}"
+    [ -z "${opts["flag_verbose"]}" ] && opts["flag_verbose"]="${config["flag_verbose"]}"
+    [ -z "${opts["flag_raw"]}" ] && opts["flag_raw"]="${config["flag_raw"]}"
+    [ -z "${opts["flag_nc"]}" ] && opts["flag_nc"]="${config["flag_nc"]}"
 }
 
+# COLOR HANLDING 
+declare c_reset="" c_bold="" c_red="" c_green="" c_yellow="" c_cyan="" c_dim=""
+[ "${opts["flag_nc"]}" != "true" ] && { 
+    c_reset="\e[0m"
+    c_bold="\e[1m"
+    c_dim="\e[2m"
+    c_red="\e[31m"
+    c_green="\e[32m"
+    c_yellow="\e[33m"
+    c_cyan="\e[36m"
+}
+
+# ARGUMENT VALIDATION
+[ -z "$unknown_arg" ] || { error "Unknown arguments: ${unknown_arg//,$/}"; }
+
 # VERBOSE HEADER
-[ "$flag_verbose" = "true" ] && {
+[ "${opts["flag_verbose"]}" = "true" ] && {
     echo -e "${c_cyan}${c_bold}${PROGNAME}${c_reset}${c_green} was launched with the verbose flag.${c_reset}"
     echo -e "Cache directory:        ${c_dim}${CACHEDIR}${c_reset}"
     echo -e "City location cache:    ${c_dim}${CITY_CACHE}${c_reset}"
@@ -279,7 +293,7 @@ done
 }
 
 # HELP
-[ -n "$flag_h" ] && { print_help; exit 0; }
+[ -n "${opts["flag_help"]}" ] && { print_help; exit 0; }
 
 # DIR/FILE INIT 
 [ -d "$CACHEDIR" ]      || { verbose "Creating the cache directory."; mkdir -p "$CACHEDIR"; }
@@ -305,7 +319,7 @@ fetch_weather "$station" "$st_pretty" "$date"
 
 # OUTPUT
 # if not outputting to a terminal output raw data 
-[ -t 1 ] || { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
+[ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
@@ -316,7 +330,7 @@ elif [ "135" -lt "$wind_dir" ] && [ "$wind_dir" -le "225" ]; then wind_dir="${c_
 elif [ "225" -lt "$wind_dir" ] && [ "$wind_dir" -le "315" ]; then wind_dir="${c_dim}→${c_reset} $wind_dir"
 fi
 
-[ "$flag_verbose" = "true" ] && echo
+[ "${opts["flag_verbose"]}" = "true" ] && echo
 echo -e "${c_green}${c_bold}Station:${c_reset} ${st_pretty} | ${c_green}${c_bold}Time:${c_reset} $(printf '%(%F %R)T\n' "-1")"
 
 echo -e "${c_cyan}Temperature:${c_reset}|${temp}|${c_dim}°C${c_reset}
