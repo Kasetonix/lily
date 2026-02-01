@@ -204,10 +204,11 @@ echo -e "${c_cyan}${c_bold}lily.sh${c_reset} - shell script for fetching weather
 USAGE: $PROGNAME [OPTION] LOCATION
 
 Options:
-    -v, --verbose   Display additional status information
-    -h, --help      Display this message
-    -r, --raw       Display output in colon-separated csv format
-    -n, --no-color  Disable output coloring
+    -h, --help       Display this message
+    -v, --verbose    Display additional status information
+    -r, --raw        Always display output in colon-separated csv format
+    -f, --formatted  Always display formatted output, even through a pipe
+    -n, --no-color   Disable output color
 
 Locations: script acccepts any location in Poland.
 
@@ -225,6 +226,7 @@ Currently supported options are:
     flag_verbose=<string>  If true acts like --verbose
     flag_raw=<string>      If true acts like --raw
     flag_nc=<string>       If true acts like --no-color
+    flag_form=<string>     If true acts like --format
 
 Data attributions:
 ${c_dim}Geocoding data from OpenStreetMap/Nominatim
@@ -246,6 +248,7 @@ for arg in "$@"; do
     if   [[ "$arg" =~ ^(v(erbose)?|-v|--verbose)$ ]]; then opts["flag_verbose"]="true"
     elif [[ "$arg" =~ ^(h(elp)?|-h|--help)$ ]]; then opts["flag_help"]="true"
     elif [[ "$arg" =~ ^(r(aw)?|-r|--raw)$ ]]; then opts["flag_raw"]="true"
+    elif [[ "$arg" =~ ^(f(ormatted)?|-f|--formatted)$ ]]; then opts["flag_form"]="true"
     elif [[ "$arg" =~ ^(nc?(olor)?|-n|--no-color)$ ]]; then opts["flag_nc"]="true"
     elif [[ "$arg" =~ ^-.*$ ]]; then [ -z "$unknown_arg" ] && unknown_arg="${arg}" || unknown_arg="${arg}, ${unknown_arg}"
     elif [ -z "$city" ]; then city="$arg"
@@ -264,6 +267,7 @@ done
     [ -z "$city" ] && city="${config["city"]}"
     [ -z "${opts["flag_verbose"]}" ] && opts["flag_verbose"]="${config["flag_verbose"]}"
     [ -z "${opts["flag_raw"]}" ] && opts["flag_raw"]="${config["flag_raw"]}"
+    [ -z "${opts["flag_form"]}" ] && opts["flag_form"]="${config["flag_form"]}"
     [ -z "${opts["flag_nc"]}" ] && opts["flag_nc"]="${config["flag_nc"]}"
 }
 
@@ -319,7 +323,7 @@ fetch_weather "$station" "$st_pretty" "$date"
 
 # OUTPUT
 # if not outputting to a terminal output raw data 
-[ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
+[ "${opts["flag_form"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
