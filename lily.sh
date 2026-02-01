@@ -31,7 +31,7 @@ clean() {
 }
 
 nom_city_format() {
-    echo "$1" | iconv -f utf-8 -t ascii//translit | sed 's/\s/-/g'
+    iconv -f utf-8 -t ascii//translit <<< "${1,,}" | sed 's/\s/-/g'
 }
 
 display_spinner() {
