@@ -18,7 +18,9 @@ verbose() { [ "${opts["flag_verbose"]}" = "true" ] && p_info "$@"; true; }
 error() { p_error "$@"; exit 1; }
 
 clear_line() {
-    local i; local line=""
+    local i line
+
+    line=""
     for ((i = 0; i < "COLUMNS"; i++)); do
         line+=" "
     done
@@ -30,13 +32,25 @@ clean() {
     echo -ne "\e[?25h"
 }
 
+# From "Pure Bash Bible" by Dylan Araps
+# https://github.com/dylanaraps/pure-bash-bible?tab=readme-ov-file#trim-all-white-space-from-string-and-truncate-spaces
+trim_all() {
+    set -f
+    set -- $*
+    printf '%s\n' "$*"
+    set +f
+}
+
 nom_city_format() {
-    iconv -f utf-8 -t ascii//translit <<< "${1,,}" | sed 's/\s/-/g'
+    city="$(trim_all "$1")"
+    city="${city// /-}"
+    iconv -f utf-8 -t ascii//translit <<< "${city,,}"
 }
 
 display_spinner() {
-    local strings=('[|]' '[/]' '[-]' '[\]')
+    local strings
 
+    strings=('[|]' '[/]' '[-]' '[\]')
     while true; do
         for str in "${strings[@]}"; do
             echo -ne "${c_cyan}${str}${c_reset} \r"
@@ -57,12 +71,12 @@ distsq() {
 }
 
 display_progress() {
-    local curr="$1"; local num="$2"; local msg="$3"
-    local char="#"; local bar_len="33"
-    local perc="$((curr * 100 / num))"
-    local bar_num="$((perc * bar_len / 100))"
+    local curr num msg char bar_len perc bar_num i bar
+    curr="$1"; num="$2"; msg="$3"
+    char="#"; bar_len="33"
+    perc="$((curr * 100 / num))"; bar_num="$((perc * bar_len / 100))"
 
-    local i; local bar="["
+    bar="["
     for ((i = 0; i < bar_num; i++)); do
         bar+="$char"
     done
@@ -76,8 +90,8 @@ display_progress() {
 }
 
 fetch_city() {
-    local fetched_city="$1"
-    local city="$2"
+    local fetched_city city nom_out jq_out lat long
+    fetched_city="$1" city="$2"
 
     citydata="$(grep -i -m 1 "$fetched_city" "$CITY_CACHE")"
     [ -n "$citydata" ] && { verbose "Found <${fetched_city}> in city cache."; return; }
@@ -91,16 +105,16 @@ fetch_city() {
     :> "$NOM_LOCKFILE"
     ( sleep "$RATELIMIT"; rm "$NOM_LOCKFILE" ) &
 
-    nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
+    nom_out="$(curl -s -H "User-Agent: $USERAGENT" \
         "https://nominatim.openstreetmap.org/search?q=${fetched_city}&countrycodes=pl&limit=1&format=json")"
     [ "$nom_out" = "[]" ] && error "City not found!"
-    latitude="$(jq -r '.[0].lat' <<< "$nom_out")"
-    longitude="$(jq -r '.[0].lon' <<< "$nom_out")"
+    jq_out="$(jq -r '.[0].lat,.[0].lon' <<< "$nom_out")"
+    read -r lat long <<< "${jq_out//$'\n'/ }"
 
-    verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${latitude}:${longitude}>." 
+    verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${lat}:${long}>." 
 
-    echo "${fetched_city}:${latitude}:${longitude}" >> "$CITY_CACHE"
-    citydata="${fetched_city}:${latitude}:${longitude}"
+    echo "${fetched_city}:${lat}:${long}" >> "$CITY_CACHE"
+    citydata="${fetched_city}:${lat}:${long}"
 
     [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
 }
@@ -113,10 +127,8 @@ rm_station_cache() {
 
 cache_stations() {
     p_info "Caching stations. This may take a while."
-    local imgw_pib_out;
-    local station_id
-    local station_name
-    local station_num
+    local imgw_pib_out station_id station_name station_num lat long
+    declare -a station_id station_name
 
     imgw_pib_out="$(curl -s -H "User-Agent: $USERAGENT" \
         "https://danepubliczne.imgw.pl/api/data/synop")"
@@ -127,22 +139,23 @@ cache_stations() {
 
     trap rm_station_cache INT TERM
 
-    local i; local fetched_city
+    local i fetched_city
     for i in "${!station_id[@]}"; do
         fetched_city="$(nom_city_format "${station_name[$i]}")"
         ( sleep "$RATELIMIT" ) &
-        nom_out="$(curl -s -H "User-Agent: $USERAGENT"\
+        nom_out="$(curl -s -H "User-Agent: $USERAGENT" \
             "https://nominatim.openstreetmap.org/search?q=${fetched_city}&countrycodes=pl&limit=1&format=json")"
         [ "$nom_out" = "[]" ] && error "Station city not found!"
-        latitude="$(jq -r '.[0].lat' <<< "$nom_out")"
-        longitude="$(jq -r '.[0].lon' <<< "$nom_out")"
+        jq_out="$(jq -r '.[0].lat,.[0].lon' <<< "$nom_out")"
+        read -r lat long <<< "${jq_out//$'\n'/ }"
 
-        verbose "Cached info: ${station_id[$i]}:${latitude}:${longitude}:${station_name[$i]}"
-        echo "${station_id[$i]}:${latitude}:${longitude}:${station_name[$i]}" >> "$STATION_CACHE"
+        verbose "Cached info: ${station_id[$i]}:${lat}:${long}:${station_name[$i]}"
+        echo "${station_id[$i]}:${lat}:${long}:${station_name[$i]}" >> "$STATION_CACHE"
         display_progress "$((i+1))" "$station_num" "${station_name[$i]}"
         wait
     done
 
+    clear_line
     clear_line
     p_info "Caching stations done."
 
@@ -150,10 +163,10 @@ cache_stations() {
 }
 
 closest_station_data() {
-    local citydata="$1"
+    local citydata city_lat city_long st_lat st_long \
+        closest_station_data distance min_distance
+    citydata="$1"; min_distance="9223372036854775807"
     IFS=: read -r _ city_lat city_long _ <<< "$citydata"
-    local distance; local closest_station_data 
-    local min_distance="9223372036854775807" 
 
     while IFS= read -r line; do
         IFS=: read -r _ st_lat st_long _ <<< "$line"
@@ -165,9 +178,7 @@ closest_station_data() {
 }
 
 fetch_weather() {
-    local station_id; local station_name; local date
-    local cachedate; local line
-    local imgw_pib_out
+    local station_id station_name date cachedate line imgw_pib_out
 
     station_id="$1"
     station_name="$2"
@@ -329,7 +340,8 @@ fetch_weather "$station" "$st_pretty" "$date"
 
 # OUTPUT
 # if not outputting to a terminal output raw data 
-[ "${opts["flag_formatted"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
+[ "${opts["flag_formatted"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && \
+    { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
 weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
 IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
