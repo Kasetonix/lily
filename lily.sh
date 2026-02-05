@@ -17,16 +17,6 @@ p_error() { echo -e "\r${c_red}[ ERR]:${c_reset} $1" >&2; }
 verbose() { [ "${opts["flag_verbose"]}" = "true" ] && p_info "$@"; true; }
 error() { p_error "$@"; exit 1; }
 
-clear_line() {
-    local i line
-
-    line=""
-    for ((i = 0; i < "COLUMNS"; i++)); do
-        line+=" "
-    done
-    echo -ne "\r${line}\r"
-}
-
 clean() {
     [ -n "$spinner_pid" ] && { kill "$spinner_pid"; unset spinner_pid; }
     echo -ne "\e[?25h"
@@ -85,8 +75,7 @@ display_progress() {
     done
     bar+="]"
     
-    clear_line
-    printf "${c_cyan}%s${c_reset} (%*s%%) %s%s\r" "$bar" 3 "$perc" "$msg"
+    printf "\r\e[K${c_cyan}%s${c_reset} (%*s%%) %s%s\r" "$bar" 3 "$perc" "$msg"
 }
 
 fetch_city() {
@@ -155,8 +144,7 @@ cache_stations() {
         wait
     done
 
-    clear_line
-    clear_line
+    echo -e "\r\e[K\r"
     p_info "Caching stations done."
 
     trap - INT TERM
