@@ -101,7 +101,6 @@ fetch_city() {
     read -r lat long <<< "${jq_out//$'\n'/ }"
 
     verbose "Caching information on <${fetched_city}>.\n\tCached info: <${fetched_city}:${lat}:${long}>." 
-
     echo "${fetched_city}:${lat}:${long}" >> "$CITY_CACHE"
     citydata="${fetched_city}:${lat}:${long}"
 
@@ -317,9 +316,11 @@ verbose "City is set to <${city_f}>."
 
 # FETCHING CITY
 fetch_city "$city_f" "$city"
+[ -z "$citydata" ] && { error "City data couldn't be fetched!"; }
 
 # FETCHING CLOSEST STATION
 IFS=: read -r station _ _ st_pretty <<< "$(closest_station_data "$citydata")"
+[ -z "$station" ] && { error "Couldn't find the closest station!"; }
 verbose "Closest station found is <${st_pretty}>."
 
 # FETCHING WEATHER
@@ -331,8 +332,11 @@ fetch_weather "$station" "$st_pretty" "$date"
 [ "${opts["flag_formatted"]}" != "true" ] && [ ! -t 1 ] || [ "${opts["flag_raw"]}" = "true" ] && \
     { clean; echo "${st_pretty}:${weatherdata}"; exit 0; }
 
-weatherdata="${weatherdata//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
-IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weatherdata"
+IFS=: read -r _ weather <<< "$weatherdata"
+[ -z "$weather" ] && { error "Couldn't fetch the weather data!"; }
+
+weather="${weather//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
+IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weather"
 
 if   [ "$wind_dir" -le  "45" ] || [ "$wind_dir" -ge "315" ]; then wind_dir="${c_dim}↓${c_reset} $wind_dir"
 elif [  "45" -lt "$wind_dir" ] && [ "$wind_dir" -le "135" ]; then wind_dir="${c_dim}←${c_reset} $wind_dir"
