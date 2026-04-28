@@ -336,7 +336,7 @@ IFS=: read -r _ weather <<< "$weatherdata"
 [ -z "$weather" ] && { error "Couldn't fetch the weather data!"; }
 
 weather="${weather//n\/a/${c_yellow}n\/a${c_reset}}" # Drawing all n/a's in yellow
-IFS=: read -r _ temp press prec hum wind_spd wind_dir <<< "$weather"
+IFS=: read -r temp press prec hum wind_spd wind_dir <<< "$weather"
 
 if   [ "$wind_dir" -le  "45" ] || [ "$wind_dir" -ge "315" ]; then wind_dir="${c_dim}↓${c_reset} $wind_dir"
 elif [  "45" -lt "$wind_dir" ] && [ "$wind_dir" -le "135" ]; then wind_dir="${c_dim}←${c_reset} $wind_dir"
